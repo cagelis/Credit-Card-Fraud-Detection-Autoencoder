@@ -11,21 +11,16 @@ import collections
 
 file_name = 'PS_20174392719_1491204439457_log.csv'
 
-# --- 1. ΠΕΡΑΣΜΑ 1: Ιστορικό Πελατών ---
-print("Βήμα 1: Σκανάρισμα αρχείου για υπολογισμό ιστορικού πελατών...")
 freq_map = collections.defaultdict(int)
 for chunk in pd.read_csv(file_name, chunksize=200000, usecols=['nameOrig']):
     counts = chunk['nameOrig'].value_counts()
     for name, count in counts.items():
         freq_map[name] += count
 
-# --- 2. ΠΡΟΕΤΟΙΜΑΣΙΑ ΜΕ ΤΑ ΝΕΑ "ΕΞΥΠΝΑ" ΧΑΡΑΚΤΗΡΙΣΤΙΚΑ ---
-print("Βήμα 2: Εκμάθηση παραμέτρων κανονικοποίησης...")
 sample_df = pd.read_csv(file_name, nrows=200000)
 sample_df['hour_of_day'] = sample_df['step'] % 24
 sample_df['transaction_freq'] = sample_df['nameOrig'].map(freq_map)
 
-# ΤΑ ΝΕΑ ΧΑΡΑΚΤΗΡΙΣΤΙΚΑ (Μαθηματικά Λάθη Υπολοίπων)
 sample_df['errorBalanceOrg'] = sample_df['newbalanceOrig'] + sample_df['amount'] - sample_df['oldbalanceOrg']
 sample_df['errorBalanceDest'] = sample_df['oldbalanceDest'] + sample_df['amount'] - sample_df['newbalanceDest']
 
@@ -41,7 +36,6 @@ preprocessor = ColumnTransformer(
 preprocessor.fit(sample_df[features])
 del sample_df 
 
-# --- 3. Η ΑΝΑΒΑΘΜΙΣΜΕΝΗ ΓΕΝΝΗΤΡΙΑ ---
 def fraud_data_generator(file_path, chunk_size, preprocessor, freq_dict):
     while True:
         for chunk in pd.read_csv(file_path, chunksize=chunk_size, usecols=['step', 'type', 'amount', 'nameOrig', 'oldbalanceOrg', 'newbalanceOrig', 'oldbalanceDest', 'newbalanceDest', 'isFraud']):
@@ -51,21 +45,18 @@ def fraud_data_generator(file_path, chunk_size, preprocessor, freq_dict):
             chunk['hour_of_day'] = chunk['step'] % 24
             chunk['transaction_freq'] = chunk['nameOrig'].map(freq_dict)
             
-            # Υπολογισμός των λαθών σε κάθε σταγόνα δεδομένων
             chunk['errorBalanceOrg'] = chunk['newbalanceOrig'] + chunk['amount'] - chunk['oldbalanceOrg']
             chunk['errorBalanceDest'] = chunk['oldbalanceDest'] + chunk['amount'] - chunk['newbalanceDest']
             
             X_processed = preprocessor.transform(chunk[features])
             yield (X_processed, X_processed)
 
-# --- 4. ΣΤΗΣΙΜΟ ΜΟΝΤΕΛΟΥ (Πιο αυστηρό Bottleneck) ---
-print("Βήμα 3: Στήσιμο Μοντέλου...")
-input_dim = 14 # Προσθέσαμε 2 νέα features
+input_dim = 14 
 
 input_layer = Input(shape=(input_dim,))
 encoder = Dense(32, activation="relu")(input_layer)
 encoder = Dense(16, activation="relu")(encoder)
-encoder = Dense(6, activation="relu")(encoder) # Το κάναμε 6 για να το ζορίσουμε περισσότερο!
+encoder = Dense(6, activation="relu")(encoder)
 
 decoder = Dense(16, activation="relu")(encoder)
 decoder = Dense(32, activation="relu")(decoder)
@@ -74,8 +65,7 @@ decoder = Dense(input_dim, activation="linear")(decoder)
 autoencoder = Model(inputs=input_layer, outputs=decoder)
 autoencoder.compile(optimizer='adam', loss='mean_squared_error')
 
-# --- 5. ΕΚΠΑΙΔΕΥΣΗ ---
-print("Βήμα 4: Εκπαίδευση με Stateful Streaming...")
+print("Started learning...")
 chunk_size = 50000
 total_normal_rows = 6354407
 steps_per_epoch = math.ceil(total_normal_rows / chunk_size)
@@ -91,8 +81,6 @@ history = autoencoder.fit(
     verbose=1
 )
 
-# --- 6. ΤΕΛΙΚΗ ΑΞΙΟΛΟΓΗΣΗ ---
-print("\nΒήμα 5: Τελική Αξιολόγηση...")
 test_df = pd.read_csv(file_name, usecols=['step', 'type', 'amount', 'nameOrig', 'oldbalanceOrg', 'newbalanceOrig', 'oldbalanceDest', 'newbalanceDest', 'isFraud'])
 test_df['hour_of_day'] = test_df['step'] % 24
 test_df['transaction_freq'] = test_df['nameOrig'].map(freq_map)
@@ -109,11 +97,10 @@ y_test = test_set['isFraud'].values
 predictions = autoencoder.predict(X_test)
 mse = np.mean(np.power(X_test - predictions, 2), axis=1)
 
-# Κρατάμε το 99% για να έχουμε εξαιρετικό Precision
 threshold = np.percentile(mse[y_test == 0], 99) 
 y_pred = [1 if e > threshold else 0 for e in mse]
 
-print("\n--- ΤΕΛΙΚΑ ΑΠΟΤΕΛΕΣΜΑΤΑ ---")
+print("\n--- FINAL RESULTS ---")
 print("Confusion Matrix:")
 print(confusion_matrix(y_test, y_pred))
 print("\nClassification Report:")
